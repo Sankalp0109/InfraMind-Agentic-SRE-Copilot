@@ -1,13 +1,24 @@
-"""InfraMind MCP server: JSON-RPC 2.0 over stdio, hand-rolled (no MCP SDK).
+"""InfraMind MCP server: JSON-RPC 2.0, hand-rolled (no MCP SDK).
 
 Primarily speaks MCP protocol revision 2026-07-28 (see protocol.py) — the
 current, stateless-per-request model. Also accepts a legacy `initialize`
 handshake (2025-11-25) as a compatibility shim for today's tooling; see the
-comment on LEGACY_PROTOCOL_VERSION in protocol.py for why. Both eras dispatch
-to the same tool registry below.
+comment on LEGACY_PROTOCOL_VERSION in protocol.py for why.
 
-One JSON-RPC message per line on stdin/stdout, per the stdio transport spec:
-https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/stdio
+`dispatch()` is the transport-agnostic protocol core: given a parsed
+JSON-RPC message, it returns the response dict (or None for a notification).
+Two transports sit on top of it:
+  - stdio (this file's `main()`): one JSON-RPC message per line on
+    stdin/stdout, per
+    https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/stdio
+  - Streamable HTTP (http_transport.py): a single POST endpoint.
+
+The legacy `initialize` shim is stdio-only. Streamable HTTP in this spec
+revision has no session concept at all (removed relative to earlier
+revisions) — a global "has this process seen initialize" flag, which is
+correct for a stdio child process scoped to one caller, would leak legacy
+state across unrelated HTTP clients. http_transport.py calls
+`dispatch(message, allow_legacy=False)` accordingly.
 """
 
 import json
@@ -32,8 +43,9 @@ class _LegacySession:
     """Tracks whether a legacy `initialize` handshake has completed.
 
     Scoped to this stdio process, per the legacy transport's session model —
-    exactly the kind of connection state the modern protocol above doesn't
-    need, since modern requests are self-contained.
+    exactly the kind of connection state the modern protocol doesn't need,
+    since modern requests are self-contained. Not used by the HTTP transport;
+    see the module docstring.
     """
 
     initialized = False
@@ -42,43 +54,35 @@ class _LegacySession:
 _legacy = _LegacySession()
 
 
-def _write(message: dict) -> None:
-    sys.stdout.write(json.dumps(message) + "\n")
-    sys.stdout.flush()
+def _result(id_, result: dict) -> dict:
+    return {"jsonrpc": "2.0", "id": id_, "result": result}
 
 
-def _send_result(id_, result: dict) -> None:
-    _write({"jsonrpc": "2.0", "id": id_, "result": result})
-
-
-def _send_error(id_, code: int, message: str, data: dict | None = None) -> None:
+def _error(id_, code: int, message: str, data: dict | None = None) -> dict:
     error = {"code": code, "message": message}
     if data is not None:
         error["data"] = data
-    _write({"jsonrpc": "2.0", "id": id_, "error": error})
+    return {"jsonrpc": "2.0", "id": id_, "error": error}
 
 
-def handle_server_discover(id_, params: dict) -> None:
-    _send_result(
-        id_,
-        {
-            "resultType": "complete",
-            "supportedVersions": [PROTOCOL_VERSION],
-            "capabilities": CAPABILITIES,
-            "_meta": {META_SERVER_INFO: SERVER_INFO},
-            "instructions": (
-                "InfraMind observability tools for the OpenTelemetry Demo: "
-                "metrics, traces, logs, alerts, and incident actions."
-            ),
-        },
-    )
+def handle_server_discover(params: dict) -> dict:
+    return {
+        "resultType": "complete",
+        "supportedVersions": [PROTOCOL_VERSION],
+        "capabilities": CAPABILITIES,
+        "_meta": {META_SERVER_INFO: SERVER_INFO},
+        "instructions": (
+            "InfraMind observability tools for the OpenTelemetry Demo: "
+            "metrics, traces, logs, alerts, and incident actions."
+        ),
+    }
 
 
-def handle_tools_list(id_, params: dict) -> None:
-    _send_result(id_, {"resultType": "complete", "tools": TOOLS})
+def handle_tools_list(params: dict) -> dict:
+    return {"resultType": "complete", "tools": TOOLS}
 
 
-def handle_tools_call(id_, params: dict) -> None:
+def handle_tools_call(params: dict) -> dict:
     name = params.get("name")
     arguments = params.get("arguments") or {}
     handler = TOOL_HANDLERS.get(name)
@@ -92,35 +96,32 @@ def handle_tools_call(id_, params: dict) -> None:
         # error, not a tool execution error, since the call itself is malformed.
         raise ProtocolError(-32602, f"Invalid arguments for tool '{name}': {exc}") from exc
 
-    _send_result(id_, {"resultType": "complete", "content": content, "isError": is_error})
+    return {"resultType": "complete", "content": content, "isError": is_error}
 
 
-def handle_resources_list(id_, params: dict) -> None:
-    _send_result(id_, {"resultType": "complete", "resources": runbooks.list_resources()})
+def handle_resources_list(params: dict) -> dict:
+    return {"resultType": "complete", "resources": runbooks.list_resources()}
 
 
-def handle_resources_read(id_, params: dict) -> None:
+def handle_resources_read(params: dict) -> dict:
     uri = params.get("uri")
     contents = runbooks.read_resource(uri)  # raises ProtocolError if not found
-    _send_result(id_, {"resultType": "complete", "contents": contents})
+    return {"resultType": "complete", "contents": contents}
 
 
-def handle_initialize(id_, params: dict) -> None:
-    """Legacy handshake entry point (2025-11-25 and earlier). See
+def handle_initialize(params: dict) -> dict:
+    """Legacy handshake entry point (2025-11-25 and earlier, stdio only). See
     LEGACY_PROTOCOL_VERSION in protocol.py for why this exists."""
     _legacy.initialized = True
-    _send_result(
-        id_,
-        {
-            "protocolVersion": LEGACY_PROTOCOL_VERSION,
-            "capabilities": CAPABILITIES,
-            "serverInfo": SERVER_INFO,
-        },
-    )
+    return {
+        "protocolVersion": LEGACY_PROTOCOL_VERSION,
+        "capabilities": CAPABILITIES,
+        "serverInfo": SERVER_INFO,
+    }
 
 
-def handle_initialized_notification(id_, params: dict) -> None:
-    pass  # legacy session confirmed by the client; nothing to do
+def handle_initialized_notification(params: dict) -> dict:
+    return {}  # legacy session confirmed by the client; nothing to do
 
 
 METHODS = {
@@ -134,15 +135,16 @@ METHODS = {
 }
 
 
-def _handle_message(message: dict) -> None:
+def dispatch(message: dict, allow_legacy: bool = True) -> dict | None:
+    """Transport-agnostic protocol core. Returns the JSON-RPC response dict,
+    or None if the message was a notification (no response expected) or not
+    a request/notification we understand at all."""
     is_notification = "id" not in message
     id_ = message.get("id")
     method = message.get("method")
 
     if method is None:
-        # Not a request/notification we understand (e.g. a response echoed
-        # back to us, which a well-behaved client should never send on stdio).
-        return
+        return None
 
     params = message.get("params") or {}
 
@@ -152,20 +154,20 @@ def _handle_message(message: dict) -> None:
         # regardless of any legacy session — the two eras are independent.
         # `initialize` itself, and any request once a legacy session is
         # established, carries no _meta and is exempt from this check.
-        if meta.get(META_PROTOCOL_VERSION) or not (method == "initialize" or _legacy.initialized):
+        in_legacy_session = allow_legacy and (method == "initialize" or _legacy.initialized)
+        if meta.get(META_PROTOCOL_VERSION) or not in_legacy_session:
             check_protocol_version(meta)
 
         handler = METHODS.get(method)
         if handler is None:
             raise ProtocolError(-32601, f"Method not found: {method}")
 
-        handler(id_, params)
+        result = handler(params)
+        return None if is_notification else _result(id_, result)
     except ProtocolError as exc:
-        if not is_notification:
-            _send_error(id_, exc.code, exc.message, exc.data)
+        return None if is_notification else _error(id_, exc.code, exc.message, exc.data)
     except Exception as exc:  # noqa: BLE001 - last-resort protocol error, never crash the loop
-        if not is_notification:
-            _send_error(id_, -32603, f"Internal error: {exc}")
+        return None if is_notification else _error(id_, -32603, f"Internal error: {exc}")
 
 
 def main() -> None:
@@ -176,9 +178,13 @@ def main() -> None:
         try:
             message = json.loads(line)
         except json.JSONDecodeError:
-            _send_error(None, -32700, "Parse error")
-            continue
-        _handle_message(message)
+            response = _error(None, -32700, "Parse error")
+        else:
+            response = dispatch(message)
+
+        if response is not None:
+            sys.stdout.write(json.dumps(response) + "\n")
+            sys.stdout.flush()
 
 
 if __name__ == "__main__":

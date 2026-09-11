@@ -41,4 +41,25 @@ DEMO_VERSION=3.0.0 docker compose -f compose.yaml -f compose.full.yaml -f compos
 ```
 /opt/anaconda3/bin/python3.13 -m venv .venv
 source .venv/bin/activate
+pip install -r mcp-server/requirements.txt
+```
+
+## MCP server
+
+Hand-rolled JSON-RPC 2.0 server (no MCP SDK), speaking the current MCP spec (`2026-07-28`) with a legacy `initialize` compatibility shim on stdio. See [`IMPLEMENTATION_DETAILS.md`](./IMPLEMENTATION_DETAILS.md) for the design decisions behind all of this.
+
+**stdio** (what most MCP clients, including the official Inspector, use):
+```
+.venv/bin/python mcp-server/server.py
+```
+
+**Streamable HTTP** (stateless, single `/mcp` endpoint):
+```
+.venv/bin/python mcp-server/http_transport.py
+```
+Binds to `127.0.0.1:8765` by default (`MCP_HTTP_PORT` to override). Set `MCP_BEARER_TOKEN` to require `Authorization: Bearer <token>` on every request — unset, auth is not enforced (fine for local dev, not for anything network-reachable). Every request must carry `MCP-Protocol-Version`, `Mcp-Method`, and (for `tools/call`/`resources/read`) `Mcp-Name` headers matching the request body, per spec.
+
+Verify either transport with the official inspector:
+```
+npx @modelcontextprotocol/inspector --cli .venv/bin/python mcp-server/server.py --method tools/list
 ```
