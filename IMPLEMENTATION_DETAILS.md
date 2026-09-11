@@ -65,3 +65,9 @@ A single checkout-flow trace can carry 100+ spans across every service involved 
 
 ### `get_logs` shells out to the real `docker` CLI rather than the Docker SDK
 Per the build plan ("container logs to start"). Went with `subprocess.run(["docker", "logs", ...])` instead of adding the `docker` Python SDK as a dependency — one more instance of stdlib-only until something genuinely needs more. `docker logs` on an unknown container name exits non-zero with a clear stderr message ("No such container: X"), which the tool surfaces directly as the `isError: true` text rather than writing a redundant custom error message.
+
+### `get_recent_deploys` is deterministic-fake, not random-fake
+otel-demo has no real deploy pipeline, so this is explicitly simulated per the build plan. Seeded `random.Random(sha256(service_name))` rather than an unseeded RNG, so the same service always returns the same fake history across calls and process restarts — matters for Phase 5's eval harness, where a scenario's expected answer needs to be stable. Every returned string is prefixed `[SIMULATED — ...]` so neither the agent nor a human reading a transcript could mistake it for real deploy data.
+
+### First mutating tools: `create_incident_ticket` (SQLite) and `post_to_slack` (webhook-or-mock)
+These are the first two tools where `READ_ONLY = False` actually matters — Phase 3's guardrails will gate on exactly this flag. `create_incident_ticket` writes to a local SQLite DB (`mcp-server/incidents.db`, gitignored — generated state, not source) with an autoincrement id, confirmed to persist correctly across separate process invocations (ticket #1 and #2 from two different `tools/call` runs). `post_to_slack` checks for `SLACK_WEBHOOK_URL`: real POST if set, otherwise a message clearly prefixed `[SIMULATED — ...]` and logged rather than silently dropped — no Slack workspace is wired up for local dev, and the build plan explicitly allows "real/mocked" here.

@@ -3,9 +3,25 @@ tools/call dispatch tables, plus a read_only/mutating tag per tool for the
 guardrails Phase 3 adds on top of this server.
 """
 
-from tools import get_active_alerts, get_logs, get_metrics, get_traces
+from tools import (
+    create_incident_ticket,
+    get_active_alerts,
+    get_logs,
+    get_metrics,
+    get_recent_deploys,
+    get_traces,
+    post_to_slack,
+)
 
-_MODULES = [get_active_alerts, get_metrics, get_traces, get_logs]
+_MODULES = [
+    get_active_alerts,
+    get_metrics,
+    get_traces,
+    get_logs,
+    get_recent_deploys,
+    create_incident_ticket,
+    post_to_slack,
+]
 
 TOOLS = [
     {

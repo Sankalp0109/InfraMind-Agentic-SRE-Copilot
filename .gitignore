@@ -4,6 +4,9 @@ __pycache__/
 *.pyc
 *.egg-info/
 
+# Generated local state
+mcp-server/incidents.db
+
 # Env / secrets
 .env.local
 *.env.local
@@ -21,3 +24,4 @@ docker-compose.override.yml
 # Claude Code local state
 .claude/
 rosy-bouncing-forest.md
+IMPLEMENTATION_DETAILS.md
