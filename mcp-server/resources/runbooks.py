@@ -20,6 +20,15 @@ def _uri_for(filename: str) -> str:
     return f"{URI_PREFIX}{filename}"
 
 
+def _title_from(path: Path) -> str:
+    """First markdown H1 in the file, e.g. '# Payment charge failing' -> that
+    text. Falls back to a filename-derived title if no H1 is present."""
+    for line in path.read_text().splitlines():
+        if line.startswith("# "):
+            return line[2:].strip()
+    return path.stem.replace("-", " ").replace("_", " ")
+
+
 def list_resources() -> list[dict]:
     if not POSTMORTEMS_DIR.is_dir():
         return []
@@ -27,7 +36,7 @@ def list_resources() -> list[dict]:
         {
             "uri": _uri_for(path.name),
             "name": path.name,
-            "description": f"Postmortem: {path.stem.replace('-', ' ').replace('_', ' ')}",
+            "description": f"Postmortem: {_title_from(path)}",
             "mimeType": "text/markdown",
         }
         for path in sorted(POSTMORTEMS_DIR.glob("*.md"))
