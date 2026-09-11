@@ -1,0 +1,23 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Env / secrets
+.env.local
+*.env.local
+
+# OS
+.DS_Store
+
+# Docker
+docker-compose.override.yml
+
+# Editors
+.vscode/
+.idea/
+
+# Claude Code local state
+.claude/
+rosy-bouncing-forest.md
