@@ -22,9 +22,10 @@ from protocol import (
     ProtocolError,
     check_protocol_version,
 )
+from resources import runbooks
 from tools import TOOL_HANDLERS, TOOLS
 
-CAPABILITIES = {"tools": {"listChanged": False}}
+CAPABILITIES = {"tools": {"listChanged": False}, "resources": {}}
 
 
 class _LegacySession:
@@ -94,6 +95,16 @@ def handle_tools_call(id_, params: dict) -> None:
     _send_result(id_, {"resultType": "complete", "content": content, "isError": is_error})
 
 
+def handle_resources_list(id_, params: dict) -> None:
+    _send_result(id_, {"resultType": "complete", "resources": runbooks.list_resources()})
+
+
+def handle_resources_read(id_, params: dict) -> None:
+    uri = params.get("uri")
+    contents = runbooks.read_resource(uri)  # raises ProtocolError if not found
+    _send_result(id_, {"resultType": "complete", "contents": contents})
+
+
 def handle_initialize(id_, params: dict) -> None:
     """Legacy handshake entry point (2025-11-25 and earlier). See
     LEGACY_PROTOCOL_VERSION in protocol.py for why this exists."""
@@ -116,6 +127,8 @@ METHODS = {
     "server/discover": handle_server_discover,
     "tools/list": handle_tools_list,
     "tools/call": handle_tools_call,
+    "resources/list": handle_resources_list,
+    "resources/read": handle_resources_read,
     "initialize": handle_initialize,
     "notifications/initialized": handle_initialized_notification,
 }
