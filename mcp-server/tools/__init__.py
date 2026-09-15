@@ -11,6 +11,7 @@ from tools import (
     get_recent_deploys,
     get_traces,
     post_to_slack,
+    search_past_incidents,
 )
 
 _MODULES = [
@@ -19,6 +20,7 @@ _MODULES = [
     get_traces,
     get_logs,
     get_recent_deploys,
+    search_past_incidents,
     create_incident_ticket,
     post_to_slack,
 ]
