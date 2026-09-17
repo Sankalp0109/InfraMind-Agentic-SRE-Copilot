@@ -1,3 +1,4 @@
 qdrant-client
 sentence-transformers
 rank-bm25
+pyyaml
